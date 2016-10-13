@@ -11,6 +11,9 @@ import scorex.transaction._
 
 import scala.util.Try
 
+/*
+ TODO: Remove assetIdOpt after Testnet relaunch
+ */
 case class IssueTransaction(sender: PublicKeyAccount,
                             assetIdOpt: Option[Array[Byte]],
                             name: Array[Byte],
@@ -20,13 +23,14 @@ case class IssueTransaction(sender: PublicKeyAccount,
                             reissuable: Boolean,
                             fee: Long,
                             timestamp: Long,
-                            signature: Array[Byte]) extends SignedTransaction {
+                            signature: Array[Byte]) extends AssetIssuance {
 
   import IssueTransaction._
 
+  override val assetFee: (Option[AssetId], Long) = (None, fee)
   override val transactionType: TransactionType.Value = TransactionType.IssueTransaction
 
-  lazy val assetId = assetIdOpt.getOrElse(id)
+  override lazy val assetId = assetIdOpt.getOrElse(id)
 
   lazy val toSign: Array[Byte] = Bytes.concat(sender.publicKey,
     assetIdOpt.map(a => (1: Byte) +: a).getOrElse(Array(0: Byte)), arrayWithSize(name), arrayWithSize(description),
@@ -48,7 +52,6 @@ case class IssueTransaction(sender: PublicKeyAccount,
     "signature" -> Base58.encode(signature)
   )
 
-  override val assetFee: (Option[AssetId], Long) = (None, fee)
   override lazy val balanceChanges: Seq[BalanceChange] =
     Seq(BalanceChange(AssetAcc(sender, Some(assetId)), quantity),
       BalanceChange(AssetAcc(sender, assetFee._1), -assetFee._2))

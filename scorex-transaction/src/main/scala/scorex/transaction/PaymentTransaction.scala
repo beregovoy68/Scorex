@@ -31,12 +31,13 @@ case class PaymentTransaction(sender: PublicKeyAccount,
 
   override lazy val json: JsObject = jsonBase() ++ Json.obj(
     "sender" -> sender.address,
+    "senderPublicKey" -> Base58.encode(sender.publicKey),
     "recipient" -> recipient.address,
     "amount" -> amount
   )
 
   override lazy val bytes: Array[Byte] = {
-    val typeBytes = Array(TypeId.toByte)
+    val typeBytes = Array(transactionType.id.toByte)
 
     val timestampBytes = Longs.toByteArray(timestamp)
     val amountBytes = Longs.toByteArray(amount)
@@ -57,6 +58,8 @@ case class PaymentTransaction(sender: PublicKeyAccount,
       ValidationResult.NegativeAmount //CHECK IF AMOUNT IS POSITIVE
     } else if (fee <= 0) {
       ValidationResult.InsufficientFee //CHECK IF FEE IS POSITIVE
+    } else if (!signatureValid) {
+      ValidationResult.InvalidSignature
     } else ValidationResult.ValidateOke
 
 
@@ -74,6 +77,7 @@ case class PaymentTransaction(sender: PublicKeyAccount,
 
   override def balanceChanges(): Seq[BalanceChange] =
     Seq(BalanceChange(AssetAcc(sender, None), -amount - fee), BalanceChange(AssetAcc(recipient, None), amount))
+
 }
 
 object PaymentTransaction extends Deser[PaymentTransaction] {
