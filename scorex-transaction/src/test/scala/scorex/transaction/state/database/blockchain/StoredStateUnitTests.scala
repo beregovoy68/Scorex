@@ -6,11 +6,10 @@ import org.h2.mvstore.MVStore
 import org.scalacheck.Gen
 import org.scalatest._
 import org.scalatest.prop.{GeneratorDrivenPropertyChecks, PropertyChecks}
-import scorex.account.PrivateKeyAccount
+import scorex.account.{Account, PrivateKeyAccount}
 import scorex.transaction._
 import scorex.transaction.assets.{IssueTransaction, ReissueTransaction, TransferTransaction}
 import scorex.transaction.state.database.state._
-
 import scala.util.Random
 
 import scorex.transaction.assets.exchange.{Order, OrderMatch}

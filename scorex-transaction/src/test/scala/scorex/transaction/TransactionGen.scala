@@ -6,8 +6,8 @@ import org.scalatest.enablers.Containing
 import org.scalatest.matchers.{BeMatcher, MatchResult}
 import scorex.account.PrivateKeyAccount
 import scorex.crypto.EllipticCurveImpl
-import scorex.transaction.assets.exchange.{Order, OrderMatch}
-import scorex.transaction.assets.{ReissueTransaction, IssueTransaction, TransferTransaction}
+import scorex.transaction.assets.exchange.{AssetPair, Order, OrderMatch, Validation}
+import scorex.transaction.assets.{IssueTransaction, ReissueTransaction, TransferTransaction}
 import scorex.utils.NTP
 
 trait TransactionGen {
