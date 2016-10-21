@@ -10,6 +10,7 @@ import scorex.account.PrivateKeyAccount
 import scorex.transaction._
 import scorex.transaction.assets.{IssueTransaction, ReissueTransaction, TransferTransaction}
 import scorex.transaction.state.database.state._
+
 import scala.util.Random
 
 import scorex.transaction.assets.exchange.{Order, OrderMatch}
@@ -31,9 +32,47 @@ with PrivateMethodTester with OptionValues with TransactionGen {
   val applyChanges = PrivateMethod[Unit]('applyChanges)
   val calcNewBalances = PrivateMethod[Unit]('calcNewBalances)
 
+  property("Transaction seq Long overflow") {
+    val TxN: Int = 12
+    val InitialBalance: Long = Long.MaxValue / 8
+    state.applyChanges(Map(testAssetAcc ->(AccState(InitialBalance), List(FeesStateChange(InitialBalance)))))
+    state.balance(testAcc) shouldBe InitialBalance
+
+    val transfers = (0 until TxN).map { i => genTransfer(InitialBalance - 1, 1) }
+    transfers.foreach(tx => state.isValid(tx) shouldBe true)
+
+    state.isValid(transfers) shouldBe false
+
+    state.applyChanges(Map(testAssetAcc ->(AccState(0L), List())))
+  }
+
+  property("Amount + fee Long overflow") {
+    val InitialBalance: Long = 100
+    state.applyChanges(Map(testAssetAcc ->(AccState(InitialBalance), List(FeesStateChange(InitialBalance)))))
+    state.balance(testAcc) shouldBe InitialBalance
+
+    val transferTx = genTransfer(Long.MaxValue, Long.MaxValue)
+    (-transferTx.fee - transferTx.amount) should be > 0L
+    state.isValid(transferTx) shouldBe false
+
+    val paymentTx = genTransfer(Long.MaxValue, Long.MaxValue)
+    (-paymentTx.fee - paymentTx.amount) should be > 0L
+    state.isValid(paymentTx) shouldBe false
+
+    state.applyChanges(Map(testAssetAcc ->(AccState(0L), List())))
+
+  }
+
+
+  private def withRollbackTest(test: => Unit): Unit = {
+    val startedState = state.stateHeight
+    val h = state.hash
+    test
+    state.rollbackTo(startedState)
+    h should be(state.hash)
+  }
 
   property("Validate transfer with too big amount") {
-
     val recipient = new PrivateKeyAccount("recipient account".getBytes)
 
     forAll(positiveLongGen, positiveLongGen) { (balance: Long, fee: Long) =>
@@ -42,7 +81,7 @@ with PrivateMethodTester with OptionValues with TransactionGen {
 
         //set some balance
         val genes = GenesisTransaction(testAcc, balance, 0)
-        state.applyChanges(state.calcNewBalances(Seq(genes), Map()))
+        state.applyChanges(Map(testAssetAcc ->(AccState(genes.amount), List(genes))))
         state.assetBalance(assetAcc) shouldBe balance
 
         //valid transfer
@@ -55,40 +94,53 @@ with PrivateMethodTester with OptionValues with TransactionGen {
           None, fee, Array())
         state.isValid(invalidtx) shouldBe false
 
-        state invokePrivate applyChanges(Map(testAssetAcc ->(AccState(0L), Seq(tx))))
-
+        state.applyChanges(Map(testAssetAcc ->(AccState(0L), List(tx))))
       }
     }
   }
 
   property("Transfer asset") {
-    forAll(transferGenerator) { tx: TransferTransaction =>
-      val senderAmountAcc = AssetAcc(tx.sender, tx.assetId)
-      val senderFeeAcc = AssetAcc(tx.sender, tx.feeAsset)
-      val recipientAmountAcc = AssetAcc(tx.recipient, tx.assetId)
+    withRollbackTest {
+      forAll(transferGenerator) { tx: TransferTransaction =>
+        val senderAmountAcc = AssetAcc(tx.sender, tx.assetId)
+        val senderFeeAcc = AssetAcc(tx.sender, tx.feeAsset)
+        val recipientAmountAcc = AssetAcc(tx.recipient, tx.assetId)
 
-      val senderAmountBalance = state.assetBalance(senderAmountAcc)
-      val senderFeeBalance = state.assetBalance(senderFeeAcc)
-      val recipientAmountBalance = state.assetBalance(recipientAmountAcc)
+        val senderAmountBalance = state.assetBalance(senderAmountAcc)
+        val senderFeeBalance = state.assetBalance(senderFeeAcc)
+        val recipientAmountBalance = state.assetBalance(recipientAmountAcc)
 
-      state.applyChanges(state.calcNewBalances(Seq(tx), Map()))
+        state.applyChanges(state.calcNewBalances(Seq(tx), Map()))
 
-      val newSenderAmountBalance = state.assetBalance(senderAmountAcc)
-      val newSenderFeeBalance = state.assetBalance(senderFeeAcc)
-      val newRecipientAmountBalance = state.assetBalance(recipientAmountAcc)
+        val newSenderAmountBalance = state.assetBalance(senderAmountAcc)
+        val newSenderFeeBalance = state.assetBalance(senderFeeAcc)
+        val newRecipientAmountBalance = state.assetBalance(recipientAmountAcc)
 
-      newRecipientAmountBalance shouldBe (recipientAmountBalance + tx.amount)
+        newRecipientAmountBalance shouldBe (recipientAmountBalance + tx.amount)
 
-      if (tx.sameAssetForFee) {
-        newSenderAmountBalance shouldBe newSenderFeeBalance
-        newSenderAmountBalance shouldBe (senderAmountBalance - tx.amount - tx.fee)
-      } else {
-        newSenderAmountBalance shouldBe senderAmountBalance - tx.amount
-        newSenderFeeBalance shouldBe senderFeeBalance - tx.fee
+        if (tx.sameAssetForFee) {
+          newSenderAmountBalance shouldBe newSenderFeeBalance
+          newSenderAmountBalance shouldBe (senderAmountBalance - tx.amount - tx.fee)
+        } else {
+          newSenderAmountBalance shouldBe senderAmountBalance - tx.amount
+          newSenderFeeBalance shouldBe senderFeeBalance - tx.fee
+        }
       }
-
     }
   }
+
+  property("Old style reissue asset") {
+    forAll(issueReissueGenerator) { pair =>
+      val issueTx: IssueTransaction = pair._1
+      val issueTx2: IssueTransaction = pair._2
+      val assetAcc = AssetAcc(issueTx.sender, Some(issueTx.assetId))
+
+      state.applyChanges(state.calcNewBalances(Seq(issueTx), Map()))
+
+      state.isValid(issueTx2, Int.MaxValue) shouldBe false
+    }
+  }
+
 
   def getBalances(a: AssetAcc*): Seq[Long] = {
     a.map(state.assetBalance(_))
@@ -129,49 +181,82 @@ with PrivateMethodTester with OptionValues with TransactionGen {
   }
 
   property("Reissue asset") {
-    forAll(issueReissueGenerator) { pair =>
-      val issueTx: IssueTransaction = pair._1
-      val reissueTx: ReissueTransaction = pair._2
-      val assetAcc = AssetAcc(issueTx.sender, Some(issueTx.assetId))
+    withRollbackTest {
+      forAll(issueReissueGenerator) { pair =>
+        val issueTx: IssueTransaction = pair._1
+        val reissueTx: ReissueTransaction = pair._3
+        val assetAcc = AssetAcc(issueTx.sender, Some(issueTx.assetId))
 
-      state.applyChanges(state.calcNewBalances(Seq(issueTx), Map()))
+        state.applyChanges(state.calcNewBalances(Seq(issueTx), Map()))
 
-      state.isValid(reissueTx, Int.MaxValue) shouldBe issueTx.reissuable
+        state.isValid(reissueTx, Int.MaxValue) shouldBe issueTx.reissuable
+      }
     }
   }
 
   property("Issue asset") {
+    withRollbackTest {
+      val startedState = state.stateHeight
+      val h = state.hash
+      forAll(issueGenerator) { issueTx: IssueTransaction =>
+        val assetAcc = AssetAcc(issueTx.sender, Some(issueTx.assetId))
+        val networkAcc = AssetAcc(issueTx.sender, None)
+
+        //set some balance
+        val genes = GenesisTransaction(issueTx.sender, issueTx.fee + Random.nextInt, issueTx.timestamp - 1)
+        state.applyChanges(state.calcNewBalances(Seq(genes), Map()))
+        state.assetBalance(assetAcc) shouldBe 0
+        state.assetBalance(networkAcc) shouldBe genes.amount
+        state.balance(issueTx.sender) shouldBe genes.amount
+
+        //issue asset
+        state.assetBalance(assetAcc) shouldBe 0
+        val newBalances = state.calcNewBalances(Seq(issueTx), Map())
+        state.applyChanges(newBalances)
+        state.assetBalance(assetAcc) shouldBe issueTx.quantity
+        state.assetBalance(networkAcc) shouldBe (genes.amount - issueTx.fee)
+      }
+    }
+  }
+
+  property("accountTransactions returns IssueTransactions") {
     forAll(issueGenerator) { issueTx: IssueTransaction =>
       val assetAcc = AssetAcc(issueTx.sender, Some(issueTx.assetId))
       val networkAcc = AssetAcc(issueTx.sender, None)
-
       //set some balance
       val genes = GenesisTransaction(issueTx.sender, issueTx.fee + Random.nextInt, issueTx.timestamp - 1)
       state.applyChanges(state.calcNewBalances(Seq(genes), Map()))
-      state.assetBalance(assetAcc) shouldBe 0
-      state.assetBalance(networkAcc) shouldBe genes.amount
-      state.balance(issueTx.sender) shouldBe genes.amount
-
       //issue asset
-      state.assetBalance(assetAcc) shouldBe 0
       val newBalances = state.calcNewBalances(Seq(issueTx), Map())
       state.applyChanges(newBalances)
-      state.assetBalance(assetAcc) shouldBe issueTx.quantity
-      state.assetBalance(networkAcc) shouldBe (genes.amount - issueTx.fee)
+      state.accountTransactions(issueTx.sender).count(_.isInstanceOf[IssueTransaction]) shouldBe 1
+    }
+  }
+
+  property("accountTransactions returns TransferTransactions if fee in base token") {
+    forAll(transferGenerator) { t: TransferTransaction =>
+      val tx = t.copy(feeAsset = None)
+      val senderAmountAcc = AssetAcc(tx.sender, tx.assetId)
+      val senderFeeAcc = AssetAcc(tx.sender, tx.feeAsset)
+      val recipientAmountAcc = AssetAcc(tx.recipient, tx.assetId)
+      state.applyChanges(state.calcNewBalances(Seq(tx), Map()))
+      state.accountTransactions(tx.sender).count(_.isInstanceOf[TransferTransaction]) shouldBe 1
     }
   }
 
   property("Applying transactions") {
-    val testAssetAcc = AssetAcc(testAcc, None)
-    forAll(paymentGenerator, Gen.posNum[Long]) { (tx: PaymentTransaction,
-                                                  balance: Long) =>
-      state.balance(testAcc) shouldBe 0
-      state.assetBalance(testAssetAcc) shouldBe 0
-      state invokePrivate applyChanges(Map(testAssetAcc ->(AccState(balance), Seq(FeesStateChange(balance), tx, tx))))
-      state.balance(testAcc) shouldBe balance
-      state.assetBalance(testAssetAcc) shouldBe balance
-      state.included(tx).value shouldBe state.stateHeight
-      state invokePrivate applyChanges(Map(testAssetAcc ->(AccState(0L), Seq(tx))))
+    withRollbackTest {
+      val testAssetAcc = AssetAcc(testAcc, None)
+      forAll(paymentGenerator, Gen.posNum[Long]) { (tx: PaymentTransaction,
+                                                    balance: Long) =>
+        state.balance(testAcc) shouldBe 0
+        state.assetBalance(testAssetAcc) shouldBe 0
+        state invokePrivate applyChanges(Map(testAssetAcc ->(AccState(balance), Seq(FeesStateChange(balance), tx, tx))))
+        state.balance(testAcc) shouldBe balance
+        state.assetBalance(testAssetAcc) shouldBe balance
+        state.included(tx).value shouldBe state.stateHeight
+        state invokePrivate applyChanges(Map(testAssetAcc ->(AccState(0L), Seq(tx))))
+      }
     }
   }
 
@@ -184,6 +269,25 @@ with PrivateMethodTester with OptionValues with TransactionGen {
     val state2 = new StoredState(new MVStore.Builder().fileName(stateFile).compress().open())
     state2.balance(testAcc) shouldBe balance
     state2 invokePrivate applyChanges(Map(testAssetAcc ->(AccState(0L), Seq())))
+  }
+
+  private var txTime: Long = 0
+
+  private def getTimestamp: Long = synchronized {
+    txTime = Math.max(System.currentTimeMillis(), txTime + 1)
+    txTime
+  }
+
+  def genTransfer(amount: Long, fee: Long): TransferTransaction = {
+    val recipient = new PrivateKeyAccount(scorex.utils.randomBytes())
+    TransferTransaction.create(None, testAcc, recipient: Account, amount, getTimestamp, None, fee, Array())
+  }
+
+  def genPayment(amount: Long, fee: Long): PaymentTransaction = {
+    val recipient = new PrivateKeyAccount(scorex.utils.randomBytes())
+    val time = getTimestamp
+    val sig = PaymentTransaction.generateSignature(testAcc, recipient, amount, fee, time)
+    new PaymentTransaction(testAcc, recipient, amount, fee, time, sig)
   }
 
 }

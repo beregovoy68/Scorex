@@ -54,6 +54,8 @@ case class TransferTransaction(assetId: Option[AssetId],
     ValidationResult.NegativeAmount //CHECK IF AMOUNT IS POSITIVE
   } else if (fee <= 0) {
     ValidationResult.InsufficientFee //CHECK IF FEE IS POSITIVE
+  } else if (Try(Math.addExact(amount, fee)).isFailure) {
+    ValidationResult.OverflowError // CHECK THAT fee+amount won't overflow Long
   } else if (!signatureValid) {
     ValidationResult.InvalidSignature
   } else ValidationResult.ValidateOke
@@ -63,6 +65,7 @@ case class TransferTransaction(assetId: Option[AssetId],
     "type" -> transactionType.id,
     "id" -> Base58.encode(id),
     "sender" -> sender.address,
+    "senderPublicKey" -> Base58.encode(sender.publicKey),
     "recipient" -> recipient.address,
     "assetId" -> assetId.map(Base58.encode),
     "amount" -> amount,
