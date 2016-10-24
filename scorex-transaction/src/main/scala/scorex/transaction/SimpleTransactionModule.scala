@@ -10,11 +10,14 @@ import scorex.network.message.Message
 import scorex.network.{Broadcast, NetworkController, TransactionalMessagesRepo}
 import scorex.settings.Settings
 import scorex.transaction.SimpleTransactionModule.StoredInBlock
-import scorex.transaction.assets.{ReissueTransaction, IssueTransaction, TransferTransaction}
+import scorex.transaction.ValidationResult.ValidationResult
+import scorex.transaction.assets.exchange.{Order, OrderMatch}
+import scorex.transaction.assets.{IssueTransaction, ReissueTransaction, TransferTransaction}
 import scorex.transaction.state.database.{BlockStorageImpl, UnconfirmedTransactionsDatabaseImpl}
-import scorex.transaction.state.wallet.{ReissueRequest, IssueRequest, Payment, TransferRequest}
+import scorex.transaction.state.wallet.{IssueRequest, Payment, ReissueRequest, TransferRequest}
 import scorex.utils._
 import scorex.wallet.Wallet
+
 import scala.concurrent.duration._
 import scala.util.Try
 import scala.util.control.NonFatal
